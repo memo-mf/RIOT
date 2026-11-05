@@ -47,7 +47,7 @@ if [ ! -f "${INFO_FILE}" ]; then
 fi
 
 # The format of the SoftDevice info line is "SoftDevice: S140 6.1.1" or
-# "SoftDevice: not found"
+# "SoftDevice: S140 version 7.3.0" or "SoftDevice: not found"
 SOFTDEVICE=$(grep "^SoftDevice" "${INFO_FILE}" | cut -d ' ' -f2- | tr -d '\r')
 
 if [ "${SOFTDEVICE}" != "not found" ] && [ "${UF2_SOFTDEV}" = "DROP" ]; then
@@ -67,7 +67,7 @@ if [ "${SOFTDEVICE}" = "not found" ] && [ "${UF2_SOFTDEV}" != "DROP" ]; then
 fi
 
 # Extract the actual SoftDevice version and compare it to the requested one
-ACT_SOFTDEV_VER=$(echo "${SOFTDEVICE}" | cut -d ' ' -f2 | tr -d '.')
+ACT_SOFTDEV_VER=$(echo "${SOFTDEVICE}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'| tr -d '.')
 REQ_SOFTDEV_VER=${UF2_SOFTDEV//SD/}
 
 if [ "${ACT_SOFTDEV_VER}" != "${REQ_SOFTDEV_VER}" ] && [ "${UF2_SOFTDEV}" != "DROP" ]; then
