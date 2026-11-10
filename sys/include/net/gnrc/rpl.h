@@ -281,7 +281,7 @@ extern "C" {
 
 /** default MOP set on compile time */
 #ifndef GNRC_RPL_DEFAULT_MOP
-#define GNRC_RPL_DEFAULT_MOP GNRC_RPL_MOP_STORING_MODE_NO_MC
+#define GNRC_RPL_DEFAULT_MOP GNRC_RPL_MOP_STORING_MODE_MC
 #endif
 /** @} */
 

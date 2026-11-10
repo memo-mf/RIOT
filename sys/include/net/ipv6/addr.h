@@ -406,7 +406,7 @@ static inline bool ipv6_addr_is_unique_local_unicast(const ipv6_addr_t *addr)
  *
  * @param[in] addr  An IPv6 address.
  *
- * @return  true, if @p addr is global unicast address,
+ * @return  true, if @p addr is global unicast or multicast address,
  * @return  false, otherwise.
  */
 static inline bool ipv6_addr_is_global(const ipv6_addr_t *addr)

@@ -175,11 +175,22 @@ void gnrc_ipv6_nib_ft_print(const gnrc_ipv6_nib_ft_t *fte)
     }
     else {
         printf("%s/%u ", ipv6_addr_to_str(addr_str, &fte->dst, sizeof(addr_str)),
-               fte->dst_len);
+        fte->dst_len);
     }
+
+    if (ipv6_addr_is_multicast(&fte->dst)) {
+        /* MCAST: iterate over fte child list*/
+        printf("MC via: ");
+        for (u_int8_t i = 0; i < (fte->num_next_hops - 1); i++)
+        {
+            printf(" %s ", ipv6_addr_to_str(addr_str, &fte->next_hop_list[i], sizeof(addr_str)));
+        }
+    }
+    
+    
     if (!ipv6_addr_is_unspecified(&fte->next_hop)) {
-        printf("via %s ", ipv6_addr_to_str(addr_str, &fte->next_hop,
-                                           sizeof(addr_str)));
+    printf("via %s ", ipv6_addr_to_str(addr_str, &fte->next_hop,
+                                    sizeof(addr_str)));
     }
     printf("dev #%u\n", fte->iface);
 }

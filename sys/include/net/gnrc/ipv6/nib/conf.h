@@ -320,6 +320,13 @@ extern "C" {
 #  define CONFIG_GNRC_IPV6_NIB_OFFL_NUMOF            (8)
 #endif
 
+/**
+ * @brief     Maximum number of next hop on link entries for an off link entry 
+ */
+#ifndef CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF
+#define CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF       (4)
+#endif
+
 #if CONFIG_GNRC_IPV6_NIB_MULTIHOP_P6C || defined(DOXYGEN)
 /**
  * @brief   Number of authoritative border router entries in NIB

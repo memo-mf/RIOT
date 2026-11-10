@@ -47,7 +47,7 @@
 #include "net/gnrc/rpl/p2p.h"
 #endif
 
-#define ENABLE_DEBUG 0
+#define ENABLE_DEBUG 1
 #include "debug.h"
 
 static char addr_str[IPV6_ADDR_MAX_STR_LEN];
@@ -657,8 +657,11 @@ static bool _parse_options(int msg_type, gnrc_rpl_instance_t *inst, gnrc_rpl_opt
                 DEBUG("RPL: updating FT entry %s/%d\n", _ip_addr_str(&(first_target->target)),
                       first_target->prefix_length);
 
-                gnrc_ipv6_nib_ft_del(&(first_target->target),
+                if(!ipv6_addr_is_multicast(&(first_target->target))) {
+                    gnrc_ipv6_nib_ft_del(&(first_target->target),
                                      first_target->prefix_length);
+                }
+                
                 gnrc_ipv6_nib_ft_add(&(first_target->target),
                                      first_target->prefix_length, src,
                                      dodag->iface,
@@ -1056,6 +1059,7 @@ static gnrc_pktsnip_t *_dao_transit_build(gnrc_pktsnip_t *pkt, uint8_t lifetime,
 
 void gnrc_rpl_send_DAO(gnrc_rpl_instance_t *inst, ipv6_addr_t *destination, uint8_t lifetime)
 {
+    DEBUG("RPL: reached  gnrc_rpl_send_DAO \n");
     gnrc_rpl_dodag_t *dodag;
 
     if (inst == NULL) {
@@ -1129,6 +1133,15 @@ void gnrc_rpl_send_DAO(gnrc_rpl_instance_t *inst, ipv6_addr_t *destination, uint
     /* add own address */
     DEBUG("RPL: Send DAO - building target %s/128\n", _ip_addr_str(me));
     if ((pkt = _dao_target_build(pkt, me, IPV6_ADDR_BIT_LEN)) == NULL) {
+        DEBUG("RPL: Send DAO - no space left in packet buffer\n");
+        return;
+    }
+
+    /* REMOVE: For Testing Only, advertise Multicast Address*/
+    ipv6_addr_t multicast_target;
+    ipv6_addr_from_str(&multicast_target, "ff0e::1234");
+    DEBUG("RPL: Send DAO - building Multicast Dummy target %s/128\n", _ip_addr_str(&multicast_target));
+    if ((pkt = _dao_target_build(pkt, &multicast_target, IPV6_ADDR_BIT_LEN)) == NULL) {
         DEBUG("RPL: Send DAO - no space left in packet buffer\n");
         return;
     }

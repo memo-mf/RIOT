@@ -197,7 +197,14 @@ typedef struct {
  * @brief   Off-link NIB entry
  */
 typedef struct {
-    _nib_onl_entry_t *next_hop; /**< next hop to destination */
+    union 
+    {
+        _nib_onl_entry_t *next_hop;
+        _nib_onl_entry_t *next_hop_list [CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF];
+    }; 
+    uint8_t num_next_hops;     /**< number of on link next hop entries/
+                                *   RPl child nodes that subscribed (Multicast) */
+
     ipv6_addr_t pfx;            /**< prefix to the destination */
     /**
      * @brief   Event for @ref GNRC_IPV6_NIB_PFX_TIMEOUT

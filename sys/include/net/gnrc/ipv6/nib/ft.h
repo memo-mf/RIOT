@@ -31,7 +31,13 @@ extern "C" {
  */
 typedef struct {
     ipv6_addr_t dst;        /**< destination or prefix */
-    ipv6_addr_t next_hop;   /**< next hop to gnrc_ipv6_nib_ft_t::dst */
+    union {
+        ipv6_addr_t next_hop; /**< next hop to gnrc_ipv6_nib_ft_t::dst */
+        ipv6_addr_t next_hop_list[CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF];       
+        /**< Collection of next hops (Multicast) gnrc_ipv6_nib_ft_t::dst */
+    };
+    uint8_t num_next_hops;  /**< number of on link next hop entries (Multicast) */
+                            
     uint8_t dst_len;        /**< prefix-length in bits of
                              *   gnrc_ipv6_nib_ft_t::dst */
     uint8_t primary;        /**< != 0 if gnrc_ipv6_nib_ft_t::dst is preferred
