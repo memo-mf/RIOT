@@ -197,13 +197,8 @@ typedef struct {
  * @brief   Off-link NIB entry
  */
 typedef struct {
-    union 
-    {
-        _nib_onl_entry_t *next_hop;
-        _nib_onl_entry_t *next_hop_list [CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF];
-    }; 
-    uint8_t num_next_hops;     /**< number of on link next hop entries/
-                                *   RPl child nodes that subscribed (Multicast) */
+    _nib_onl_entry_t *next_hop;
+
 
     ipv6_addr_t pfx;            /**< prefix to the destination */
     /**
@@ -226,6 +221,50 @@ typedef struct {
     uint32_t pref_until;        /**< timestamp (in ms) until which the prefix
                                      preferred (UINT32_MAX means forever) */
 } _nib_offl_entry_t;
+
+
+/* TODO:    check if necessary for modularity/ only relevant for Multicasting 
+            #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_ROUTER)
+            */
+
+/**
+ * @brief   Off-link NIB entry for Multicast Adresses
+ */
+typedef struct _nib_offl_mc_entry _nib_offl_mc_entry_t;
+
+typedef struct {
+    _nib_onl_entry_t *next_hop;
+    _nib_offl_mc_entry_t *offl_mc_entry;
+    evtimer_msg_event_t *route_timeout;
+    uint8_t hop_index;
+} _nib_mc_nexthop_t; 
+
+
+ struct _nib_offl_mc_entry {
+    _nib_mc_nexthop_t next_hop_list[CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF];
+    uint8_t num_next_hops;     /**< number of on link next hop entries/
+                                *   RPl child nodes that subscribed */
+    evtimer_msg_event_t route_timeouts[CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF]; 
+    uint16_t timeout_slot_bitmask; /**< marks which slots in route_timeouts are in use*/
+
+    ipv6_addr_t pfx;            /**< prefix to the destination/ Multicas Addr */
+    /**
+     * @brief   Event for @ref GNRC_IPV6_NIB_PFX_TIMEOUT
+     */
+    evtimer_msg_event_t pfx_timeout;
+
+    uint8_t mode;               /**< [mode](@ref net_gnrc_ipv6_nib_mode) of the
+                                 *   off-link entry */
+    uint8_t pfx_len;            /**< prefix-length in bits of
+                                 *   _nib_onl_entry_t::pfx */
+    uint16_t flags;             /**< [flags](@ref net_gnrc_ipv6_nib_offl_flags */
+    uint32_t valid_until;       /**< timestamp (in ms) until which the prefix
+                                     valid (UINT32_MAX means forever) */
+    uint32_t pref_until;        /**< timestamp (in ms) until which the prefix
+                                     preferred (UINT32_MAX means forever) */
+};
+
+//#endif
 
 /**
  * @brief   Internal NIB-representation of the authoritative border router
@@ -592,11 +631,57 @@ _nib_offl_entry_t *_nib_offl_alloc(const ipv6_addr_t *next_hop, unsigned iface,
                                    const ipv6_addr_t *pfx, unsigned pfx_len);
 
 /**
+ * @brief   Creates an off-link Multicast entry or get an existing one or adds 
+ *          another next hop respectively by next hop and prefix.
+ *
+ * @pre `(pfx != NULL) && (pfx != "::") && (pfx_len != 0) && (pfx_len <= 128)`
+ *
+ * @param[in] next_hop  An IPv6 address to next hop. May be NULL (for prefix
+ *                      list). *May also be a global address!*
+ * @param[in] iface     The interface to @p next_hop.
+ * @param[in] pfx       The IPv6 prefix or address of the destination.
+ *                      Must not be NULL or unspecified address. Use
+ *                      @ref _nib_drl_add() for default route destinations.
+ * @param[in] pfx_len   The length in bits of @p pfx in bits.
+ * 
+ * @param[in] lifetime  If a next hop entry is added then this sets the lifetime
+ *                      of that route.
+ *
+ * @return  A new or existing off-link entry with _nib_dr_entry_t::pfx set to
+ *          @p pfx.
+ * @return  NULL, if no space is left.
+ */
+_nib_offl_mc_entry_t *_nib_offl_mc_alloc(const ipv6_addr_t *next_hop, unsigned iface,
+                                    const ipv6_addr_t *pfx, unsigned pfx_len,
+                                    u_int32_t lifetime);                                   
+
+/**
  * @brief   Clears out a NIB entry (off-link version)
  *
  * @param[in,out] dst  An entry.
  */
 void _nib_offl_clear(_nib_offl_entry_t *dst);
+
+/**
+ * @brief   Clears out a NIB entry (off-link Multicast version)
+ *
+ * @param[in,out] dst  An entry.
+ */
+void _nib_offl_mc_clear(_nib_offl_mc_entry_t *dst);
+
+/**
+ * @brief   Prunes a NIB Multicast entry (removes a single next hop)
+ *
+ * @param[in,out] mc_next_hop  A Multicast next hop
+ */
+void _nib_offl_mc_prune(_nib_mc_nexthop_t *mc_next_hop);
+
+/**
+ * @brief   Removes a single next hop, from the next hop list it is in.
+ *
+ * @param[in,out] mc_next_hop  A Multicast next hop to be removed
+ */
+void _nib_offl_mc_remove_from_next_hop_list(_nib_mc_nexthop_t *next_hop);
 
 /**
  * @brief   Iterates over off-link entries
@@ -608,6 +693,15 @@ void _nib_offl_clear(_nib_offl_entry_t *dst);
 _nib_offl_entry_t *_nib_offl_iter(const _nib_offl_entry_t *last);
 
 /**
+ * @brief   Iterates over off-link entries in the Multicast Table
+ *
+ * @param[in] last  Last entry (NULL to start).
+ *
+ * @return  Multicast entry after @p last.
+ */
+_nib_offl_mc_entry_t * _nib_offl_mc_iter(const _nib_offl_mc_entry_t *last);
+
+/**
  * @brief   Checks if @p entry was allocated using _nib_offl_alloc()
  *
  * @param[in] entry An entry.
@@ -616,6 +710,29 @@ _nib_offl_entry_t *_nib_offl_iter(const _nib_offl_entry_t *last);
  * @return  false, if @p entry was not allocated using @ref _nib_offl_alloc()
  */
 bool _nib_offl_is_entry(const _nib_offl_entry_t *entry);
+
+/**
+ * @brief   Checks if @p entry was allocated using _nib_offl_mc_alloc()
+ *
+ * @param[in] entry An entry.
+ *
+ * @return  true, if @p entry was allocated using @ref _nib_offl_mc_alloc()
+ * @return  false, if @p entry was not allocated using @ref _nib_offl_mc_alloc()
+ */
+bool _nib_offl_mc_is_entry(const _nib_offl_mc_entry_t *entry);
+
+/**
+ * @brief   Checks if @p ctx falls in memory address range of _mc_dsts (multicast entries)
+ *
+ * @param[in] ctx A ctx.
+ *
+ * @return  true, if @p ctx is in the memory adress range
+ * @return  false, if @p ctx is not in the memory adress range
+ */
+bool _nib_is_in_mc_entries(void * ctx);
+
+int _nib_mc_alloc_route_timeout_slot(_nib_offl_mc_entry_t *mc_entry);
+void _nib_mc_free_route_timeout_slot(_nib_offl_mc_entry_t *mc_entry, uint8_t slot);
 
 /**
  * @brief   Helper function for view-level add-functions below
@@ -648,6 +765,20 @@ static inline _nib_offl_entry_t *_nib_offl_add(const ipv6_addr_t *next_hop,
     return nib_offl;
 }
 
+static inline _nib_offl_mc_entry_t * _nib_offl_mc_add(const ipv6_addr_t *next_hop,
+                                               unsigned iface,
+                                               const ipv6_addr_t *pfx,
+                                               unsigned pfx_len, uint8_t mode, 
+                                               u_int32_t lifetime)
+{
+    _nib_offl_mc_entry_t *nib_mc_offl = _nib_offl_mc_alloc(next_hop, iface, pfx,
+                                                           pfx_len, lifetime);
+    if (nib_mc_offl != NULL) {
+        nib_mc_offl->mode |= mode;
+    }                                                  
+    return nib_mc_offl;
+}
+
 /**
  * @brief   Helper function for the view-level remove-functions below
  *
@@ -657,6 +788,17 @@ static inline void _nib_offl_remove(_nib_offl_entry_t *nib_offl, uint8_t mode)
 {
     nib_offl->mode &= ~mode;
     _nib_offl_clear(nib_offl);
+}
+
+/**
+ * @brief   Helper function for the view-level remove-functions below
+ *
+ * @param[in,out] nib_offl  An entry.
+ */
+static inline void _nib_offl_mc_remove(_nib_offl_mc_entry_t *nib_offl_mc, uint8_t mode)
+{
+    nib_offl_mc->mode &= ~mode;
+    _nib_offl_mc_clear(nib_offl_mc);
 }
 
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_DC) || DOXYGEN
@@ -774,6 +916,14 @@ static inline _nib_offl_entry_t *_nib_ft_add(const ipv6_addr_t *next_hop,
     return _nib_offl_add(next_hop, iface, pfx, pfx_len, _FT);
 }
 
+static inline _nib_offl_mc_entry_t * _nib_ft_mc_add(const ipv6_addr_t *next_hop,
+                                             unsigned iface,
+                                             const ipv6_addr_t *pfx,
+                                             unsigned pfx_len, uint32_t life_time)
+{
+    return _nib_offl_mc_add(next_hop, iface, pfx, pfx_len, _FT, life_time);
+}
+
 /**
  * @brief   Removes a forwarding table entry
  *
@@ -787,6 +937,30 @@ static inline void _nib_ft_remove(_nib_offl_entry_t *nib_offl)
 {
     _evtimer_del(&nib_offl->route_timeout);
     _nib_offl_remove(nib_offl, _FT);
+}
+
+/**
+ * @brief   Removes a complete Multicast forwarding table entry
+ *
+ * @param[in,out] nib_offl_mc    An off link Multicast entry.
+ *
+ * Corresponding on-link entry is removed, too.
+ *
+ * @note    Only available if @ref CONFIG_GNRC_IPV6_NIB_ROUTER.
+ */
+static inline void _nib_ft_mc_remove(_nib_offl_mc_entry_t *nib_offl_mc)
+{
+    for (u_int8_t i = 0; i < nib_offl_mc->num_next_hops; i++)
+    {
+        _evtimer_del(&nib_offl_mc->route_timeouts[i]);
+    }
+    _nib_offl_mc_remove(nib_offl_mc, _FT);
+}
+
+static inline void _nib_ft_mc_prune(_nib_mc_nexthop_t *mc_next_hop)
+{
+    _evtimer_del(mc_next_hop->route_timeout);
+    _nib_offl_mc_prune(mc_next_hop);
 }
 #endif  /* CONFIG_GNRC_IPV6_NIB_ROUTER */
 
@@ -862,6 +1036,18 @@ _nib_abr_entry_t *_nib_abr_iter(const _nib_abr_entry_t *last);
  * @param[out] fte  External representation of the forwarding table entry.
  */
 void _nib_ft_get(const _nib_offl_entry_t *dst, gnrc_ipv6_nib_ft_t *fte);
+
+/**
+ * @brief   Gets external forwarding table entry representation from off-link
+ *          Multicast entry
+ *
+ * @pre `(dst != NULL) && (dst->next_hop != NULL) && (fte != NULL)`
+ *
+ * @param[in] dst   Off-link Multicast entry.
+ * @param[out] fte  External representation of the forwarding table entry.
+ */
+void _nib_ft_mc_get(const _nib_offl_mc_entry_t *dst, gnrc_ipv6_nib_ft_t *fte);
+
 
 /**
  * @brief   Gets best match to @p dst from all off-link entries and default

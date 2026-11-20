@@ -37,6 +37,7 @@ static clist_node_t _next_removable = { NULL };
 
 static _nib_onl_entry_t _nodes[CONFIG_GNRC_IPV6_NIB_NUMOF];
 static _nib_offl_entry_t _dsts[CONFIG_GNRC_IPV6_NIB_OFFL_NUMOF];
+static _nib_offl_mc_entry_t _mc_dsts[CONFIG_GNRC_IPV6_NIB_MC_OFFL_NUMOF];
 static _nib_dr_entry_t _def_routers[CONFIG_GNRC_IPV6_NIB_DEFAULT_ROUTER_NUMOF];
 
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_MULTIHOP_P6C)
@@ -497,64 +498,22 @@ _nib_offl_entry_t *_nib_offl_alloc(const ipv6_addr_t *next_hop, unsigned iface,
             continue;
         }
 
-        /* else: offlink entry not empty, potential match */
-        //char addr_str[IPV6_ADDR_MAX_STR_LEN];
-        //char *pfx_str = ipv6_addr_is_unspecified(&tmp->pfx) ? "UNSPECIFIED" : ipv6_addr_to_str(addr_str, &tmp->pfx, sizeof(addr_str));
-        DEBUG("nib: checking slot %u: mode=%u, pfx_len=%u (incoming pfx_len=%u); matching: %u \n", 
-              i, tmp->mode, tmp->pfx_len, pfx_len, ipv6_addr_match_prefix(&tmp->pfx, pfx));
+         /* else: offlink entry not empty, potential match */
         if (tmp->pfx_len == pfx_len && ipv6_addr_match_prefix(&tmp->pfx, pfx) >= pfx_len) {
             /* prefix matches */
-            DEBUG("nib: Prefix matches already existing entry\n");
-
-            if (ipv6_addr_is_multicast(pfx)) { 
-                /* If MCAST add it in tmp->next_hop_list[num_next_hops] (next empty one)*/
-                DEBUG("Is Multicast Adress, so check if next hop is already listed. \n");
-                if (tmp->num_next_hops < CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF) {
-                    for(uint8_t j = 0; j < tmp->num_next_hops; j++) {
-                        if (tmp->next_hop_list[j] != NULL && ipv6_addr_equal(&tmp->next_hop_list[j]->ipv6, next_hop)) 
-                        {
-                            DEBUG("Next Hop already listed in this entry - skip\n");
-                            return tmp;
-                        }
-                    }
-
-
-                    /*REMOVE: just for testing purposes*/
-                    char addr_str[IPV6_ADDR_MAX_STR_LEN];
-                    DEBUG("nib: Multicast, adding next hop %s\n", ipv6_addr_to_str(addr_str, &tmp->next_hop_list[tmp->num_next_hops]->ipv6, sizeof(addr_str)));
-
-
-                    if (!tmp->next_hop_list[tmp->num_next_hops] && !(tmp->next_hop_list[tmp->num_next_hops] = _nib_onl_alloc(next_hop, iface))) 
-                    {
-                        return NULL;
-                    }
-                    DEBUG("New next hop added to entry, incrementing num_next_hops\n");
-                    tmp->num_next_hops++;
-
-                    return tmp;
+            assert(tmp_node);
+            if (_nib_onl_get_if(tmp_node) == iface && (ipv6_addr_is_unspecified(&tmp_node->ipv6)
+                                                       || _addr_equals(next_hop, tmp_node))) {
+                /* next hop matches or is unspecified */
+                DEBUG("  %p is an exact match\n", (void *)tmp);
+                if (next_hop != NULL) {
+                    /* sets next_hop if it was previously unspecified */
+                    memcpy(&tmp_node->ipv6, next_hop, sizeof(tmp_node->ipv6));
                 }
-                else {
-                    DEBUG("nib: Max number of Multicast next hops for this adress reached\n");
-                    return NULL;
-                }
+                /*mark that this NCE is used by an offl_entry*/
+                tmp->next_hop->mode |= _DST;
+                return tmp;
             }
-            else {
-                assert(tmp_node);
-            
-                if (_nib_onl_get_if(tmp_node) == iface && (ipv6_addr_is_unspecified(&tmp_node->ipv6)
-                                                        || _addr_equals(next_hop, tmp_node))) {
-                    /* next hop matches or is unspecified */
-                    DEBUG("  %p is an exact match\n", (void *)tmp);
-                    if (next_hop != NULL) {
-                        /* sets next_hop if it was previously unspecified */
-                        memcpy(&tmp_node->ipv6, next_hop, sizeof(tmp_node->ipv6));
-                    }
-                    /*mark that this NCE is used by an offl_entry*/
-                    tmp_node->mode |= _DST;
-                    return tmp;
-                }
-            
-            }  
         }
     }
     if (dst != NULL) {
@@ -563,24 +522,139 @@ _nib_offl_entry_t *_nib_offl_alloc(const ipv6_addr_t *next_hop, unsigned iface,
             memset(dst, 0, sizeof(_nib_offl_entry_t));
             return NULL;
         }
-        DEBUG("NIB: new offl entry added ");
         _override_node(next_hop, iface, dst->next_hop);
         dst->next_hop->mode |= _DST;
+        ipv6_addr_init_prefix(&dst->pfx, pfx, pfx_len);
+        dst->pfx_len = pfx_len;
+    }
+    return dst;
+}
+
+_nib_offl_mc_entry_t *_nib_offl_mc_alloc(const ipv6_addr_t *next_hop, unsigned iface,
+                                    const ipv6_addr_t *pfx, unsigned pfx_len,
+                                    u_int32_t lifetime)
+{
+    _nib_offl_mc_entry_t *dst = NULL;
+
+    assert((pfx != NULL) && (!ipv6_addr_is_unspecified(pfx)) &&
+           (pfx_len > 0) && (pfx_len <= 128) && ipv6_addr_is_multicast(pfx));
+
+
+    DEBUG("nib: Allocating off-link-entry for MC adress "
+          "(next_hop = %s, iface = %u, ",
+          (next_hop == NULL) ? "NULL" : ipv6_addr_to_str(addr_str, next_hop,
+                                                         sizeof(addr_str)),
+          iface);
+    DEBUG("pfx = %s/%u)\n", ipv6_addr_to_str(addr_str, pfx,
+                                             sizeof(addr_str)), pfx_len);
+
+    for (unsigned i = 0; i < CONFIG_GNRC_IPV6_NIB_MC_OFFL_NUMOF; i++)
+    {
+        _nib_offl_mc_entry_t *tmp = &_mc_dsts[i];
+
+        if (tmp->mode == _EMPTY) {
+            DEBUG("is _EMPTY \n");
+            if (dst == NULL) {
+                DEBUG("Making _mc_dsts[%i] the new dst.\n", i);
+                dst = tmp;
+            }
+            continue;
+        }
+
+        if (tmp->pfx_len == pfx_len && ipv6_addr_match_prefix(&tmp->pfx, pfx) >= pfx_len) {
+            DEBUG("nib: Prefix matches already existing entry\n");
+
+            if (tmp->num_next_hops < CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF) {
+                for(uint8_t j = 0; j < tmp->num_next_hops; j++) {
+                    if(ipv6_addr_equal(&tmp->next_hop_list[j].next_hop->ipv6, next_hop)) {
+                        DEBUG("nib: Next Hop already listed in this entry\n");
+
+                        /* del & set new timer event with new route time out*/
+                        _evtimer_del(tmp->next_hop_list[j].route_timeout);
+                        _evtimer_add(&tmp->next_hop_list[j], GNRC_IPV6_NIB_ROUTE_TIMEOUT,
+                                     tmp->next_hop_list[j].route_timeout, lifetime);
+                        return tmp;
+                    }
+                    if (!tmp->next_hop_list[tmp->num_next_hops].next_hop &&
+                        !(tmp->next_hop_list[tmp->num_next_hops].next_hop = _nib_onl_alloc(next_hop, iface))) 
+                    {
+                        return NULL;
+                    }
+                    DEBUG("New next hop added to entry, incrementing num_next_hops, setting timer\n");
+                    tmp->num_next_hops++;
+                    _nib_mc_nexthop_t *next_hop = &tmp->next_hop_list[tmp->num_next_hops];
+
+                    int route_timeout_slot = _nib_mc_alloc_route_timeout_slot(tmp);
+                    if (route_timeout_slot > 0)
+                    {
+                        next_hop->route_timeout = &tmp->route_timeouts[route_timeout_slot];
+                        _evtimer_add(next_hop, GNRC_IPV6_NIB_ROUTE_TIMEOUT, next_hop->route_timeout, lifetime);
+                    }
+                    
+                    
+                    next_hop->hop_index = tmp->num_next_hops-1;
+                    return tmp;
+                }
+            }
+        }
+    }
+    if (dst != NULL) {
+        DEBUG("  using %p\n", (void *)dst); 
+        if (!(dst->next_hop_list[0].next_hop = _nib_onl_alloc(next_hop, iface))) {
+            memset(dst, 0, sizeof(_nib_offl_mc_entry_t));
+            return NULL;
+        }
+        DEBUG("NIB: new offl Multicast entry added ");
+        _override_node(next_hop, iface, dst->next_hop_list[0].next_hop);
+        dst->next_hop_list[0].next_hop->mode |= _DST;
+        dst->next_hop_list[0].hop_index = 0;
         ipv6_addr_init_prefix(&dst->pfx, pfx, pfx_len);
         dst->pfx_len = pfx_len;
         dst->num_next_hops = 1;
         dst->mode = _FT;
 
+        int route_timeout_slot = _nib_mc_alloc_route_timeout_slot(dst);
+        if (route_timeout_slot > 0)
+        {
+            dst->next_hop_list[0].route_timeout = &dst->route_timeouts[route_timeout_slot];
+           _evtimer_add(&dst->next_hop_list[0], GNRC_IPV6_NIB_ROUTE_TIMEOUT,
+                         &dst->route_timeouts[route_timeout_slot], lifetime);
+        }
+        
+        
+
         /*REMOVE: Just for testing purposes*/
         char addr_str[IPV6_ADDR_MAX_STR_LEN];
-        DEBUG("with next hop: %s\n", ipv6_addr_to_str(addr_str, &dst->next_hop->ipv6, sizeof(addr_str)));
+        DEBUG("with next hop: %s\n", ipv6_addr_to_str(addr_str, &dst->next_hop_list[0].next_hop->ipv6, sizeof(addr_str)));
+        
+        for (u_int8_t k = 0; k < 4; k++)
+        {
+            _nib_offl_mc_entry_t *tmp = &_mc_dsts[k];
+            DEBUG("Slot %u: %s", k, ipv6_addr_to_str(addr_str, &tmp->pfx, sizeof(addr_str)));
+            if (tmp->mode == _EMPTY) {
+                DEBUG("Mode is _EMPTY\n");
+            }
+            else if (tmp->mode == _FT) {
+                DEBUG("Mode is _FT\n");
+            }
+            else{
+                DEBUG("\n");
+            }   
+        }
     }
     return dst;
+
+
 }
 
 static inline bool _in_dsts(const _nib_offl_entry_t *dst)
 {
     return (dst < (_dsts + CONFIG_GNRC_IPV6_NIB_OFFL_NUMOF));
+}
+
+static inline bool _in_mc_dsts(const _nib_offl_mc_entry_t *dst)
+{
+    return (dst < (_mc_dsts + CONFIG_GNRC_IPV6_NIB_MC_OFFL_NUMOF));
 }
 
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_MULTIHOP_P6C)
@@ -597,6 +671,9 @@ static inline bool _in_abrs(const _nib_abr_entry_t *abr)
 
 void _nib_offl_clear(_nib_offl_entry_t *dst)
 {
+    char addr_str[IPV6_ADDR_MAX_STR_LEN];
+    DEBUG("FT entry getting removed for: %s\n", ipv6_addr_to_str(addr_str, &dst->pfx, sizeof(addr_str)));
+
     if (dst->mode == _EMPTY) {
         if (dst->next_hop != NULL) {
             _nib_offl_entry_t *ptr;
@@ -606,8 +683,26 @@ void _nib_offl_clear(_nib_offl_entry_t *dst)
                     break;
                 }
             }
+
+            // check Multicast FT entries
+            _nib_offl_mc_entry_t *mc_ptr;
+            for (mc_ptr = _mc_dsts; _in_mc_dsts(mc_ptr); mc_ptr++) {
+                
+                bool found = false;
+                for (uint8_t j = 0; j < mc_ptr->num_next_hops; j++)
+                {
+                    if (dst->next_hop == mc_ptr->next_hop_list[j].next_hop) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (found){
+                    break;
+                }
+            }
+
             /* we iterated and found no further dst pointing to next-hop */
-            if (!_in_dsts(ptr)) {
+            if (!_in_dsts(ptr) && !_in_mc_dsts(mc_ptr)) {
                 dst->next_hop->mode &= ~(_DST);
                 _nib_onl_clear(dst->next_hop);
             }
@@ -620,6 +715,118 @@ void _nib_offl_clear(_nib_offl_entry_t *dst)
               dst->pfx_len, dst->mode);
     }
 }
+
+void _nib_offl_mc_clear(_nib_offl_mc_entry_t *dst)
+{
+    /* REMOVE: prints here only for testing purposes while developing*/
+    char addr_str[IPV6_ADDR_MAX_STR_LEN];
+    DEBUG("MC FT entry getting removed for: %s\n", ipv6_addr_to_str(addr_str, &dst->pfx, sizeof(addr_str)));
+
+    if (dst->mode == _EMPTY) {
+        for (u_int8_t i = 0; i < dst->num_next_hops; i++)
+        {
+            if (dst->next_hop_list[i].next_hop != NULL) {
+
+
+            /* TODO: Maybe extra helper function for this check, as we need the
+            *        fucntionality in other places too*/
+
+            // check standard Unicast FT entries _dsts
+            _nib_offl_entry_t *ptr;
+            for (ptr = _dsts; _in_dsts(ptr); ptr++) {
+                /* there is a unicast dst pointing to next-hop => only remove dst */
+                if (dst->next_hop_list[i].next_hop == ptr->next_hop) {
+                    break;
+                }
+            }
+            // check Multicast FT entries
+            _nib_offl_mc_entry_t *mc_ptr;
+            for (mc_ptr = _mc_dsts; _in_mc_dsts(mc_ptr); mc_ptr++) {
+                /* there is another MC dst pointing to next-hop => only remove dst */
+
+                for (uint8_t j = 0; j < mc_ptr->num_next_hops; j++)
+                {
+                    if ((dst != mc_ptr) && (dst->next_hop_list[i].next_hop == mc_ptr->next_hop_list[j].next_hop)) {
+                        break;
+                    }
+                }
+            }
+
+            /* we iterated and found no further dst pointing to next-hop */
+            if (!_in_dsts(ptr) && !_in_mc_dsts(mc_ptr)) {
+                dst->next_hop_list[i].next_hop->mode &= ~(_DST);
+                _nib_onl_clear(dst->next_hop_list[i].next_hop);
+            }
+        }
+        memset(dst, 0, sizeof(_nib_offl_mc_entry_t));
+        }
+        
+        
+    }
+    else {
+        DEBUG("nib: offlink MC entry %s/%u with mode %u not cleared\n",
+              ipv6_addr_to_str(addr_str, &dst->pfx, sizeof(addr_str)),
+              dst->pfx_len, dst->mode);
+    }
+}
+
+void _nib_offl_mc_prune(_nib_mc_nexthop_t *mc_next_hop) 
+{
+    /* TODO: disect this entry and remove respective components, check if no 
+    *  next hops anymore-> remove whole MC entry
+    */
+    _nib_offl_mc_entry_t *offl_mc_entry = mc_next_hop->offl_mc_entry;
+
+
+    // check standard Unicast FT entries _dsts
+    _nib_offl_entry_t *ptr;
+    for (ptr = _dsts; _in_dsts(ptr); ptr++) {
+        /* there is a unicast dst pointing to next-hop onl entry 
+            => only from this MC entries next_hop_list */
+        if (mc_next_hop->next_hop == ptr->next_hop) {
+            break;
+        }
+    }
+    // check Multicast FT entries
+    _nib_offl_mc_entry_t *mc_ptr;
+    for (mc_ptr = _mc_dsts; _in_mc_dsts(mc_ptr); mc_ptr++) {
+        /* there is another MC dst pointing to next-hop onl entry 
+            => only from this MC entries next_hop_list */
+        for (uint8_t j = 0; j < mc_ptr->num_next_hops; j++) {
+            if ((offl_mc_entry != mc_ptr) 
+                 && (mc_next_hop->next_hop == mc_ptr->next_hop_list[j].next_hop)) {
+                break;
+            }
+        }
+    }
+    /* we iterated and found no further off link entry pointing to next-hop */
+    if (!_in_dsts(ptr) && !_in_mc_dsts(mc_ptr)) {
+        mc_next_hop->next_hop->mode &= ~(_DST);
+        _nib_onl_clear(mc_next_hop->next_hop);
+    }
+    _nib_offl_mc_remove_from_next_hop_list(mc_next_hop);
+    memset(mc_next_hop, 0, sizeof(_nib_mc_nexthop_t));
+}
+
+void _nib_offl_mc_remove_from_next_hop_list(_nib_mc_nexthop_t *next_hop) 
+{
+    _nib_offl_mc_entry_t *offl_mc_entry = next_hop->offl_mc_entry;
+    if (next_hop->hop_index > offl_mc_entry->num_next_hops) {
+        return;
+    }
+    _evtimer_del(next_hop->route_timeout);
+    _nib_mc_free_route_timeout_slot(next_hop->offl_mc_entry, next_hop->hop_index);
+    offl_mc_entry->num_next_hops -= 1;
+    DEBUG("nib: MC Removing single next hop, Copying others to the front\n");
+    for (uint8_t i = next_hop->hop_index; i < offl_mc_entry->num_next_hops; i++)
+        {
+            offl_mc_entry->next_hop_list[i] = offl_mc_entry->next_hop_list[i + 1];
+            offl_mc_entry->next_hop_list[i].hop_index = i;
+            offl_mc_entry->next_hop_list[i].route_timeout->msg.content.ptr = &offl_mc_entry->next_hop_list[i];
+        }
+    
+}
+
 
 _nib_offl_entry_t *_nib_offl_iter(const _nib_offl_entry_t *last)
 {
@@ -635,9 +842,64 @@ _nib_offl_entry_t *_nib_offl_iter(const _nib_offl_entry_t *last)
     return NULL;
 }
 
+_nib_offl_mc_entry_t * _nib_offl_mc_iter(const _nib_offl_mc_entry_t *last)
+{
+    for (const _nib_offl_mc_entry_t *dst = (last) ? (last + 1) : _mc_dsts;
+         _in_mc_dsts(dst);
+         dst++) {
+        if (dst->mode != _EMPTY) {
+            /* const modifier provided to assure internal consistency.
+             * Can now be discarded. */
+            return (_nib_offl_mc_entry_t *)dst;
+        }
+    }
+    return NULL;
+}
+
 bool _nib_offl_is_entry(const _nib_offl_entry_t *entry)
 {
     return (entry >= _dsts) && _in_dsts(entry);
+}
+
+bool _nib_offl_mc_is_entry(const _nib_offl_mc_entry_t *entry)
+{
+    return (entry >= _mc_dsts) && _in_mc_dsts(entry);
+}
+
+bool _nib_is_in_mc_entries(void * ctx) 
+{
+    for (_nib_offl_mc_entry_t *entry = _mc_dsts; _in_mc_dsts(entry); entry++)
+    {
+        for (u_int8_t i = 0; i < entry->num_next_hops; i++)
+        {
+            if (ctx == &entry->next_hop_list[i])
+            {
+                return true;
+            } 
+        }
+    }
+    return false;
+}
+
+int _nib_mc_alloc_route_timeout_slot(_nib_offl_mc_entry_t *mc_entry)
+{
+    for (uint8_t i = 0; i < CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF; i++)
+    {
+        uint16_t bit = (uint16_t) UINT16_C(1 << i);
+        if ((mc_entry->timeout_slot_bitmask & bit) == 0)
+        {
+            mc_entry->timeout_slot_bitmask |= (uint16_t) UINT16_C(1 << i);
+            return (int) i;
+        }
+    }
+    return -1;
+} 
+void _nib_mc_free_route_timeout_slot(_nib_offl_mc_entry_t *mc_entry, uint8_t slot)
+{
+    if (slot < CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF)
+    {
+        mc_entry->timeout_slot_bitmask &= ~(0 << slot);
+    }
 }
 
 static _nib_offl_entry_t *_nib_offl_get_match(const ipv6_addr_t *dst)
@@ -669,6 +931,30 @@ static _nib_offl_entry_t *_nib_offl_get_match(const ipv6_addr_t *dst)
     return res;
 }
 
+static _nib_offl_mc_entry_t *_nib_offl_mc_get_match(const ipv6_addr_t *dst)
+{
+    _nib_offl_mc_entry_t *res = NULL;
+    uint8_t best_match = 0;
+
+    DEBUG("nib: get MC match for destination %s from NIB\n",
+          ipv6_addr_to_str(addr_str, dst, sizeof(addr_str)));
+    for (_nib_offl_mc_entry_t *entry = _mc_dsts; _in_mc_dsts(entry); entry++) {
+        if (entry->mode != _EMPTY) {
+            uint8_t match = ipv6_addr_match_prefix(&entry->pfx, dst);
+
+            DEBUG("nib: %s/%u => ",
+                  ipv6_addr_to_str(addr_str, &entry->pfx, sizeof(addr_str)),
+                  entry->pfx_len);
+            if ((match > best_match) && (match >= entry->pfx_len)) {
+                DEBUG("nib: best match (%u bits)\n", match);
+                res = entry;
+                best_match = match;
+            }
+        }
+    }
+    return res;
+}
+
 void _nib_ft_get(const _nib_offl_entry_t *dst, gnrc_ipv6_nib_ft_t *fte)
 {
     assert((dst != NULL) && (dst->next_hop != NULL) && (fte != NULL));
@@ -680,19 +966,28 @@ void _nib_ft_get(const _nib_offl_entry_t *dst, gnrc_ipv6_nib_ft_t *fte)
         ipv6_addr_set_unspecified(&fte->next_hop);
     }
     else {
-        if (ipv6_addr_is_multicast(&dst->pfx))
-        {
-            /* copy as many entries from dst->next_hop_list as dst->num_next_hops into*/
-            fte->num_next_hops = dst->num_next_hops;
-            for(uint8_t i = 0; i < (dst->num_next_hops); i++) {
-                memcpy(&fte->next_hop_list[i], &dst->next_hop_list[i]->ipv6, sizeof(dst->next_hop_list[i]->ipv6));
-                DEBUG("FT: Multicast - current number of next hops (FT: %u / NIB: %u)\n", fte->num_next_hops, dst->num_next_hops);
-            }
+        memcpy(&fte->next_hop, &dst->next_hop->ipv6, sizeof(dst->next_hop->ipv6));
+        fte->num_next_hops = 1;   
+    }
+}
+
+void _nib_ft_mc_get(const _nib_offl_mc_entry_t *dst, gnrc_ipv6_nib_ft_t *fte)
+{
+    assert((dst != NULL) && (&dst->next_hop_list[0]) && (fte != NULL));
+    memcpy(&fte->dst, &dst->pfx, sizeof(dst->pfx));
+    fte->dst_len = dst->pfx_len;
+    fte->primary = 0;
+    fte->iface = _nib_onl_get_if(dst->next_hop_list[0].next_hop);
+    if (dst->mode == _PL) { /* entry is only in prefix list */
+        ipv6_addr_set_unspecified(&fte->next_hop);
+    }
+    else {
+        /* copy as many entries from dst->next_hop_list as dst->num_next_hops into*/
+        fte->num_next_hops = dst->num_next_hops;
+        for(uint8_t i = 0; i < (dst->num_next_hops); i++) {
+            memcpy(&fte->next_hop_list[i], &dst->next_hop_list[i].next_hop->ipv6, sizeof(dst->next_hop_list[i].next_hop->ipv6));
         }
-        else {
-            memcpy(&fte->next_hop, &dst->next_hop->ipv6, sizeof(dst->next_hop->ipv6));
-            fte->num_next_hops = 1;
-        }
+        DEBUG("FT: Multicast - current number of next hops (FT: %u / NIB: %u)\n", fte->num_next_hops, dst->num_next_hops);
         
         
     }
@@ -706,8 +1001,9 @@ int _nib_get_route(const ipv6_addr_t *dst, gnrc_pktsnip_t *pkt,
           ipv6_addr_to_str(addr_str, dst, sizeof(addr_str)),
           (void *)pkt);
     _nib_offl_entry_t *offl = _nib_offl_get_match(dst);
+    _nib_offl_mc_entry_t *offl_mc = _nib_offl_mc_get_match(dst);
 
-    if ((offl == NULL) ||
+    if (((offl == NULL) && offl_mc == NULL) ||
         /* give default route precedence over off-link PLEs */
         ((offl->mode == _PL) && !(offl->flags & _PFX_ON_LINK))) {
         _nib_dr_entry_t *router = _nib_drl_get_dr();
@@ -735,7 +1031,12 @@ int _nib_get_route(const ipv6_addr_t *dst, gnrc_pktsnip_t *pkt,
             return 0;
         }
     }
+    if (offl == NULL) {
+        _nib_ft_mc_get(offl_mc, fte);
+        return 0;
+    } 
     _nib_ft_get(offl, fte);
+    
     return 0;
 }
 

@@ -513,7 +513,12 @@ void gnrc_ipv6_nib_handle_timer_event(void *ctx, uint16_t type)
             _handle_snd_mc_ra(ctx);
             break;
         case GNRC_IPV6_NIB_ROUTE_TIMEOUT:
-            _nib_ft_remove(ctx);
+            if (_nib_is_in_mc_entries(ctx))
+            {
+                _nib_ft_mc_prune(ctx);
+            } else {
+                _nib_ft_remove(ctx);
+            }
             break;
 #endif  /* CONFIG_GNRC_IPV6_NIB_ROUTER */
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_6LR)

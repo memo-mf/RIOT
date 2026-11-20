@@ -19,6 +19,9 @@
 #include "net/gnrc/ipv6/nib.h"
 #include "net/gnrc/ipv6/nib/ft.h"
 
+#define ENABLE_DEBUG 1
+#include "debug.h"
+
 int gnrc_ipv6_nib_ft_get(const ipv6_addr_t *dst, gnrc_pktsnip_t *pkt,
                          gnrc_ipv6_nib_ft_t *fte)
 {
@@ -70,6 +73,18 @@ int gnrc_ipv6_nib_ft_add(const ipv6_addr_t *dst, unsigned dst_len,
         }
     }
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_ROUTER)
+
+    else if (ipv6_addr_is_multicast(dst)) {
+        _nib_offl_mc_entry_t *ptr;
+
+        dst_len = (dst_len > 128) ? 128 : dst_len;
+
+        ptr = _nib_ft_mc_add(next_hop, iface, dst, dst_len, ltime_ms);
+        if (ptr == NULL) {
+            res = -ENOMEM;
+        }
+
+    }
     else {
         _nib_offl_entry_t *ptr;
 
@@ -104,15 +119,29 @@ void gnrc_ipv6_nib_ft_del(const ipv6_addr_t *dst, unsigned dst_len)
     }
 #if IS_ACTIVE(CONFIG_GNRC_IPV6_NIB_ROUTER)
     else {
-        _nib_offl_entry_t *entry = NULL;
 
-        while ((entry = _nib_offl_iter(entry))) {
-            if ((entry->pfx_len == dst_len) &&
-                (ipv6_addr_match_prefix(&entry->pfx, dst) >= dst_len)) {
-                _nib_ft_remove(entry);
-                break;
+        if (ipv6_addr_is_multicast(dst)) 
+        {
+            _nib_offl_mc_entry_t *entry = NULL;
+            while ((entry = _nib_offl_mc_iter(entry))) 
+            {
+                if ((entry->pfx_len == dst_len) &&
+                    (ipv6_addr_match_prefix(&entry->pfx, dst) >= dst_len)) {
+                    _nib_ft_mc_remove(entry);
+                    break;
+                } 
             }
-        }
+        } else {
+            _nib_offl_entry_t *entry = NULL;
+
+            while ((entry = _nib_offl_iter(entry))) {
+                if ((entry->pfx_len == dst_len) &&
+                    (ipv6_addr_match_prefix(&entry->pfx, dst) >= dst_len)) {
+                    _nib_ft_remove(entry);
+                    break;
+                }
+            }
+        }        
     }
 #endif
     _nib_release();
@@ -152,7 +181,46 @@ bool gnrc_ipv6_nib_ft_iter(const ipv6_addr_t *next_hop, unsigned iface,
         }
         *state = NULL;
     }
+
+    if ((*state == NULL) || _nib_offl_mc_is_entry(*state)){
+         _nib_offl_mc_entry_t *offl_mc = *state;
+
+        while ((offl_mc = _nib_offl_mc_iter(offl_mc))) {
+            assert(offl_mc->mode != 0);
+            if (offl_mc->num_next_hops == 0) {
+                /* 'holey' NIB / dangling reference.
+                 * there is no next hop */
+                continue;
+            }
+            if (iface && iface != _nib_onl_get_if(offl_mc->next_hop_list[0].next_hop)) {
+                /* interface does not match */
+                DEBUG("NIB: FT ITER: Interface does not match.\n");
+                continue;
+            }
+            bool hop_matches = false;
+            for (u_int8_t i = 0; i < offl_mc->num_next_hops; i++)
+            {
+                _nib_onl_entry_t *nh = offl_mc->next_hop_list[i].next_hop;
+                if (next_hop && ipv6_addr_equal(&nh->ipv6, next_hop)) {
+                    hop_matches = true;
+                    break;
+                }
+            }
+            if (next_hop && !hop_matches)
+            {   
+                DEBUG("NIB: FT ITER: no entry matches.\n");
+                continue;
+            }
+            _nib_ft_mc_get(offl_mc, fte);
+            *state = offl_mc;
+            return true;
+        }
+        *state = NULL;
+    }
+       
     entry = *state;
+    
+    /*TODO: guard entry against being something else then _nib_dr_entry_t ??*/
     while ((entry = _nib_drl_iter(entry))) {
         if ((entry->next_hop != NULL) &&
             ((iface == 0) || (iface == _nib_onl_get_if(entry->next_hop))) &&
@@ -181,12 +249,11 @@ void gnrc_ipv6_nib_ft_print(const gnrc_ipv6_nib_ft_t *fte)
     if (ipv6_addr_is_multicast(&fte->dst)) {
         /* MCAST: iterate over fte child list*/
         printf("MC via: ");
-        for (u_int8_t i = 0; i < (fte->num_next_hops - 1); i++)
+        for (u_int8_t i = 0; i < (fte->num_next_hops); i++)
         {
             printf(" %s ", ipv6_addr_to_str(addr_str, &fte->next_hop_list[i], sizeof(addr_str)));
         }
     }
-    
     
     if (!ipv6_addr_is_unspecified(&fte->next_hop)) {
     printf("via %s ", ipv6_addr_to_str(addr_str, &fte->next_hop,

@@ -321,6 +321,16 @@ extern "C" {
 #endif
 
 /**
+ * @brief   Number of off-link entries in NIB
+ *
+ * @attention   This number is equal to the maximum number of forwarding table
+ *              and prefix list entries in NIB
+ */
+#ifndef CONFIG_GNRC_IPV6_NIB_MC_OFFL_NUMOF
+#   define CONFIG_GNRC_IPV6_NIB_MC_OFFL_NUMOF         (8)
+#endif
+
+/**
  * @brief     Maximum number of next hop on link entries for an off link entry 
  */
 #ifndef CONFIG_GNRC_IPV6_NIB_OFFL_NEXTHOP_NUMOF

@@ -636,7 +636,9 @@ static bool _parse_options(int msg_type, gnrc_rpl_instance_t *inst, gnrc_rpl_opt
             DEBUG("RPL: adding FT entry %s/%d\n", _ip_addr_str(&(target->target)),
                   target->prefix_length);
 
-            gnrc_ipv6_nib_ft_del(&(target->target), target->prefix_length);
+            if(!ipv6_addr_is_multicast(&(target->target))) {
+                gnrc_ipv6_nib_ft_del(&(target->target), target->prefix_length);
+            }
             gnrc_ipv6_nib_ft_add(&(target->target), target->prefix_length, src,
                                  dodag->iface,
                                  dodag->default_lifetime * dodag->lifetime_unit);
