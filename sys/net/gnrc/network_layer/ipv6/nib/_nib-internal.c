@@ -575,26 +575,26 @@ _nib_offl_mc_entry_t *_nib_offl_mc_alloc(const ipv6_addr_t *next_hop, unsigned i
                                      tmp->next_hop_list[j].route_timeout, lifetime);
                         return tmp;
                     }
-                    if (!tmp->next_hop_list[tmp->num_next_hops].next_hop &&
-                        !(tmp->next_hop_list[tmp->num_next_hops].next_hop = _nib_onl_alloc(next_hop, iface))) 
-                    {
-                        return NULL;
-                    }
-                    DEBUG("New next hop added to entry, incrementing num_next_hops, setting timer\n");
-                    tmp->num_next_hops++;
-                    _nib_mc_nexthop_t *next_hop = &tmp->next_hop_list[tmp->num_next_hops];
-
-                    int route_timeout_slot = _nib_mc_alloc_route_timeout_slot(tmp);
-                    if (route_timeout_slot > 0)
-                    {
-                        next_hop->route_timeout = &tmp->route_timeouts[route_timeout_slot];
-                        _evtimer_add(next_hop, GNRC_IPV6_NIB_ROUTE_TIMEOUT, next_hop->route_timeout, lifetime);
-                    }
-                    
-                    
-                    next_hop->hop_index = tmp->num_next_hops-1;
-                    return tmp;
                 }
+                if (!tmp->next_hop_list[tmp->num_next_hops].next_hop &&
+                    !(tmp->next_hop_list[tmp->num_next_hops].next_hop = _nib_onl_alloc(next_hop, iface))) 
+                {
+                    return NULL;
+                }
+                DEBUG("New next hop added to entry, incrementing num_next_hops, setting timer\n");
+                tmp->num_next_hops++;
+                _nib_mc_nexthop_t *next_hop = &tmp->next_hop_list[tmp->num_next_hops];
+
+                int route_timeout_slot = _nib_mc_alloc_route_timeout_slot(tmp);
+                if (route_timeout_slot > 0)
+                {
+                    next_hop->route_timeout = &tmp->route_timeouts[route_timeout_slot];
+                    _evtimer_add(next_hop, GNRC_IPV6_NIB_ROUTE_TIMEOUT, next_hop->route_timeout, lifetime);
+                }
+                
+                
+                next_hop->hop_index = tmp->num_next_hops-1;
+                return tmp;
             }
         }
     }

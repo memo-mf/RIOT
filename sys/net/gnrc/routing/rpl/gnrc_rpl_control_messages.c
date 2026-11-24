@@ -1132,6 +1132,29 @@ void gnrc_rpl_send_DAO(gnrc_rpl_instance_t *inst, ipv6_addr_t *destination, uint
         }
     }
 
+    ipv6_addr_t mc_groups[GNRC_NETIF_IPV6_GROUPS_NUMOF];
+    int res = gnrc_netif_ipv6_groups_get(netif, mc_groups, sizeof(mc_groups));
+    if (res > 0) {
+        size_t count = (size_t) res / sizeof(ipv6_addr_t);
+        for (size_t i = 0; i < count; i++) {
+
+            if (ipv6_addr_is_site_local(&mc_groups[i]) || ipv6_addr_is_global(&mc_groups[i])) {
+                if ((pkt = _dao_transit_build(pkt, lifetime, false)) == NULL) {
+                    DEBUG("RPL: Send DAO - no space left in packet buffer\n");
+                    return;
+                }
+                if ((pkt = _dao_target_build(pkt, &mc_groups[i], IPV6_ADDR_BIT_LEN)) == NULL) {
+                    DEBUG("RPL: Send DAO - no space left in packet buffer\n");
+                    return;
+                }
+            }
+            
+
+        }
+        
+    }
+    
+
     /* add own address */
     DEBUG("RPL: Send DAO - building target %s/128\n", _ip_addr_str(me));
     if ((pkt = _dao_target_build(pkt, me, IPV6_ADDR_BIT_LEN)) == NULL) {
@@ -1140,13 +1163,14 @@ void gnrc_rpl_send_DAO(gnrc_rpl_instance_t *inst, ipv6_addr_t *destination, uint
     }
 
     /* REMOVE: For Testing Only, advertise Multicast Address*/
-    ipv6_addr_t multicast_target;
+    /*ipv6_addr_t multicast_target;
     ipv6_addr_from_str(&multicast_target, "ff0e::1234");
     DEBUG("RPL: Send DAO - building Multicast Dummy target %s/128\n", _ip_addr_str(&multicast_target));
     if ((pkt = _dao_target_build(pkt, &multicast_target, IPV6_ADDR_BIT_LEN)) == NULL) {
         DEBUG("RPL: Send DAO - no space left in packet buffer\n");
         return;
     }
+    */
 
     bool local_instance = (inst->id & GNRC_RPL_INSTANCE_ID_MSB) ? true : false;
 
